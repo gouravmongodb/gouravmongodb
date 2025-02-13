@@ -3,10 +3,10 @@
 # Define variables as shown below
 
 # Enter the connection string to destination (Example of a 3-RS cluster on AWS shown)
-myURIdestination: "mongodb+srv://migrationuser:migrationuseradmin@cluster0.6c8kk.mongodb.net/"
+myURIdestination: "mongodb+srv://migrationuser:<>@cluster0.6c8kk.mongodb.net/"
 
 # Enter the connection string to source (Example of Atlas cluster shown)
-myURIsource: "mongodb+srv://migrationuser:migrationuseradmin@cluster0.6c8kk.mongodb.net/"
+myURIsource: "mongodb+srv://migrationuser:<>@cluster0.6c8kk.mongodb.net/"
 
 # Percent of samples to be used for comparing between source and destination
 # Start with 0.1, 1, 2, 5 and then more percent
