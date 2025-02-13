@@ -1,4 +1,5 @@
 const fs = require('fs');
+const yaml = require('js-yaml');
 const MongoClient = require('mongodb').MongoClient;
 
 async function exportIndexes() {
