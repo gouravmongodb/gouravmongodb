@@ -1,0 +1,19 @@
+# Verifier Config YAML File
+# Ask the client to change the username password accordingly.
+# Define variables as shown below
+
+# Enter the connection string to destination (Example of a 3-RS cluster on AWS shown)
+myURIdestination: "mongodb+srv://migrationuser:migrationuseradmin@cluster0.6c8kk.mongodb.net/"
+
+# Enter the connection string to source (Example of Atlas cluster shown)
+myURIsource: "mongodb+srv://migrationuser:migrationuseradmin@cluster0.6c8kk.mongodb.net/"
+
+# Percent of samples to be used for comparing between source and destination
+# Start with 0.1, 1, 2, 5 and then more percent
+# Time the run as the runtime will vary.
+# For more advanced usage play with batch size in the line 466 of the script.
+sampleSizePercent: 0.1
+
+# Adjust batch size based on memory constraints, this is the number of docs fetched on RAM to compare between destination and source
+# For each doc it will be loaded twice on RAM (one from destination, other from source)
+batchSize: 100
