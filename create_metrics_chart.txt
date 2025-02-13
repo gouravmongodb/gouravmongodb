@@ -1,0 +1,281 @@
+The python code to add data into the database is as follows:
+
+Updated Python code to check for the data duplicacy, so the code can be executed as many times as needed but will add the data point only if not present in the collection. Make note the python code should be executed every 24 hours using an automated system to store the measurements data.  NOTE: Fix the indentation of the code in an editor such as pycharm.
+Refer to the link here to get the names of the measurements: https://www.mongodb.com/docs/atlas/reference/api-resources-spec/v2/#tag/Monitoring-and-Logs/operation/getHostMeasurements
+
+print("Code Start")
+import requests, json
+from requests.auth import HTTPDigestAuth
+from datetime import datetime
+
+# Install pymongo using the `pip install pymongo` command
+from pymongo import MongoClient
+
+# Set org authentication credentials
+MONGODB_ATLAS_PUBLIC_KEY = "xnfwxnhj"
+MONGODB_ATLAS_PRIVATE_KEY = "96b8f95e-364d-4bc0-86d0-6399620a82e0"
+ORG_ID = "6079bcc3bd1187307486bc28"
+
+db_username = "testchart"
+db_password = "testchart123"
+
+MONGO_URI = "mongodb+srv://"+db_username+":"+db_password+"@test-charts.i2m7t.mongodb.net/retryWrites=true&w=majority"
+
+DATABASE_NAME = "cluster_measurement_db"
+COLLECTION_NAME = "coll_"+ORG_ID # Kept the cluster name same as the org_id
+
+auth = HTTPDigestAuth(
+    MONGODB_ATLAS_PUBLIC_KEY,
+    MONGODB_ATLAS_PRIVATE_KEY
+)
+
+
+# Function to prettify dictionary
+def pretty_dict(input_dict):
+    return json.dumps(input_dict, indent=4, sort_keys=True)
+
+
+# Function to get all the clusters details in a given project-id
+def get_all_project_id_details():
+    PROJECT_ID_VALUE_LIST = []
+    base_url = "https://cloud.mongodb.com/api/atlas/v2/clusters"
+    # Headers
+    headers = {
+        "Accept": "application/vnd.atlas.2024-11-13+json"
+    }
+    response = requests.get(f"{base_url}", headers=headers, auth=auth, params={'pretty': True})
+    response_data = response.json()
+    #print(json.dumps(response_data, indent=4))
+    for result in response_data["results"]:
+        PROJECT_ID_VALUE_LIST.append(result['groupId'])
+    return PROJECT_ID_VALUE_LIST
+
+
+# Function to get all the clusters details in a given project-id
+def get_all_clusters_details(proj_id):
+    base_url = "https://cloud.mongodb.com/api/atlas/v2/groups/" + proj_id + "/clusters"
+    # Headers
+    headers = {
+        "Accept": "application/vnd.atlas.2024-11-13+json"
+    }
+    response = requests.get(f"{base_url}", headers=headers, auth=auth, params={'pretty': True})
+    response_data = response.json()
+    #print(json.dumps(response_data, indent=4))
+    return response_data
+
+
+# Function to get all the clusters details in a given project-id
+def get_measurement_details(project_id, process_id, measurement_name=["QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED"]):
+    base_url = "https://cloud.mongodb.com/api/atlas/v2/groups/" + project_id + "/processes/" + process_id + "/measurements"
+    # Headers
+    headers = {
+        "Accept": "application/vnd.atlas.2024-11-13+json"
+    }
+    response = requests.get(f"{base_url}",
+                            headers=headers,
+                            auth=auth,
+                            params={'pretty': True,
+                                    'm': [measurement_name],
+                                    'period': "P1D",
+                                    'granularity': "PT1H"})
+
+    dataPoints = response.json().get('measurements')[0].get('dataPoints')
+    #print(json.dumps(response.json(), indent=4))
+    return dataPoints
+
+# NOTE: Enter the name of the measurements you want to be saved in the collection
+# https://www.mongodb.com/docs/atlas/reference/api-resources-spec/v2/#tag/Monitoring-and-Logs/operation/getHostMeasurements
+measurement_name_list = ["QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED", "MAX_SYSTEM_CPU_USER"]
+measurement_details_list = []
+PROJECT_ID_LIST = get_all_project_id_details()
+print("PROJECT_ID_LIST", PROJECT_ID_LIST)
+
+
+for PROJECT_ID in PROJECT_ID_LIST:
+    clusters_data = get_all_clusters_details(PROJECT_ID)
+    for measurement_name in measurement_name_list:
+        for result in clusters_data.get("results"):
+            #print(result)
+            if result.get("connectionStrings"):
+                mongo_uri = result.get("connectionStrings").get('standard')
+            else:
+                continue
+            mongo_uri_list = mongo_uri.split("mongodb://")[-1].split(",")
+            for mongo_uri in mongo_uri_list:
+                #print(mongo_uri.split("/")[0])
+                dataPoints = get_measurement_details(PROJECT_ID, mongo_uri.split("/")[0], [measurement_name])
+                measurement_details_list.append({'org_id': ORG_ID,
+                                                 'project_id': PROJECT_ID,
+                                                 "cluster_id": result.get("id"),
+                                                 "cluster_name": result.get("name"),
+                                                 "measurement_name": measurement_name,
+                                                 'mongo_uri': mongo_uri.split("/")[0],
+                                                 'data_points': dataPoints})
+
+modified_measurement_details_list = []
+for measurement_detail in measurement_details_list:
+    dataPoints = measurement_detail.get('data_points')
+    modified_dataPoints = []
+    for dataPoint in dataPoints:
+        if dataPoint['value'] is not None:
+            # Standardizing the timestamp to hour
+            timestamp = str(dataPoint['timestamp']).split(":")[0]+":00:00Z"
+            value = dataPoint['value']
+            modified_dataPoints.append({"timestamp":timestamp, "value":value})
+    modified_measurement_details_list.append({'org_id': measurement_detail.get('org_id'),
+                                             'project_id': measurement_detail.get('project_id'),
+                                             "cluster_id": measurement_detail.get('cluster_id'),
+                                             "cluster_name": measurement_detail.get('cluster_name'),
+                                             "measurement_name": measurement_detail.get('measurement_name'),
+                                             'mongo_uri': measurement_detail.get('mongo_uri'),
+                                             'data_points': modified_dataPoints})
+
+# Connect to MongoDB
+client = MongoClient(MONGO_URI)
+db = client[DATABASE_NAME]
+collection = db[COLLECTION_NAME]
+
+final_dict_push = []
+for measurement_detail in modified_measurement_details_list:
+    for data_point in measurement_detail.get("data_points"):
+
+        # Convert to datetime object (removing 'Z' for Python compatibility)
+        timestamp_dt = datetime.strptime(data_point.get("timestamp"), "%Y-%m-%dT%H:%M:%SZ")
+
+        final_dict_push.append({
+            "org_id": measurement_detail.get('org_id'),
+            "project_id": measurement_detail.get('project_id'),
+            "cluster_id": measurement_detail.get('cluster_id'),
+            "cluster_name": measurement_detail.get('cluster_name'),
+            "measurement_name": measurement_detail.get('measurement_name'),
+            "mongo_uri": measurement_detail.get('mongo_uri'),
+            "timestamp": timestamp_dt,
+            "value": data_point.get("value")})
+
+# Insert the dictionary into the collection
+for doc in final_dict_push:
+
+    # Check if the doc already exists in the collection, if True then continue
+    if collection.count_documents({"cluster_id": doc['cluster_id'],
+                                    "mongo_uri": doc['mongo_uri'],
+                                    "measurement_name": doc['measurement_name'],
+                                    "timestamp": doc['timestamp']}) > 0:
+        print("Skip, doc already in collection")
+        print(doc)
+        continue
+    result = collection.insert_one(doc)
+    print(f"Document inserted with ID: {result.inserted_id}")
+
+
+# Create the following indexes
+def check_index_existence(field_list):
+    index_present_flag = False
+    for index_dict in collection.list_indexes():
+        index_list = (index_dict['key'])
+        exist = field_list == list(index_list.keys())
+        index_present_flag = index_present_flag or exist
+
+    return index_present_flag
+
+
+if not check_index_existence(["org_id"]):
+    print("Creating index on org_id")
+    collection.create_index({"org_id": 1})
+
+if not check_index_existence(["project_id"]):
+    print("Creating index on project_id")
+    collection.create_index({"project_id": 1})
+
+if not check_index_existence(["cluster_id"]):
+    print("Creating index on cluster_id")
+    collection.create_index({"cluster_id": 1})
+
+if not check_index_existence(["cluster_name"]):
+    print("Creating index on cluster_name")
+    collection.create_index({"cluster_name": 1})
+
+if not check_index_existence(["measurement_name"]):
+    print("Creating index on measurement_name")
+    collection.create_index({"measurement_name": 1})
+
+if not check_index_existence(["org_id", "project_id", "cluster_name", "measurement_name"]):
+    print("Creating index on org_id, project_id, cluster_name, measurement_name")
+    collection.create_index({"org_id": 1, "project_id": 1, "cluster_name": 1, "measurement_name": 1})
+
+if not check_index_existence(["cluster_id", "mongo_uri", "measurement_name"]):
+    print("Creating index on cluster_id, mongo_uri, measurement_name")
+    collection.create_index({"cluster_id": 1, "mongo_uri": 1, "measurement_name": 1})
+
+if not check_index_existence(["timestamp"]):
+    print("Creating TTL index on timestamp")
+    collection.create_index("timestamp", expireAfterSeconds=7776000)
+
+print("Code End")
+
+
+Instructions to create Index on the collection:
+Create the following 8 indexes on the collection (NOTE: THE PYTHON CODE ABOVE DOES THAT, Just give a check in Atlas if these are created):
+org_id_1
+project_id_1
+cluster_name_1
+cluster_id_1
+measurement_name_1
+cluster_id_1_measurement_name_1
+org_id_1_project_id_1_cluster_name_1_measurement_name_1
+
+Also add TTL index latter on the timestamp field and remove data as needed.
+
+TTL index creation with 3 months (3*30 days) expiry limit.
+db.your_collection.createIndex( { "timestamp": 1 }, { expireAfterSeconds: 7776000} )
+
+Instructions to create the aggregation pipeline in Atlas charts:
+Create a agg pipeline in the box near the box called library in the Atlas charts window:
+
+[
+  {
+    $group: {
+      _id: {
+        org_id: "$org_id",
+        project_id: "$project_id",
+        cluster_name: "$cluster_name",
+        measurement_name: "$measurement_name",
+        timestamp: "$timestamp"
+      },
+      max_value: { $max: "$value" }
+    }
+  }
+]
+
+Instructions to plot the chart on the Atlas:
+Steps to Create the Chart in Atlas Charts
+Open MongoDB Atlas Charts
+
+Go to MongoDB Atlas
+Navigate to Charts and click Create a Chart
+Select the Data Source
+
+Choose the collection where the initial data are stored.
+Next create an agg pipeline in the box near the library box as discussed above in the section for agg pipeline creation.
+Choose Chart Type
+
+Select Grouped Column.
+Set Up the X-axis (Time)
+
+Drag timestamp to the X-axis.
+Change the format to category and order Ascending.
+Set Up the Y-axis (Value)
+
+Drag max_value to the Y-axis.
+Set the aggregation as "Max".
+Group by Cluster Name (Color)
+
+Drag cluster_name to the Series (Color) section.
+This will ensure different cluster_name values have different colors.
+Add Filter for Measurement Name
+
+Click Filters (top-right corner).
+Add a filter for measurement_name.
+Choose Dropdown Selector so users can select a measurement.
+Save and Publish
+
+Click Save and Close the chart. 
